@@ -16,6 +16,8 @@ function DietPlans() {
   const [mealOptions, setMealOptions] = useState<MealOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showCustomization, setShowCustomization] = useState(false);
+  const [activityLevel, setActivityLevel] = useState('moderate');
+  const [recommendations, setRecommendations] = useState<any>(null);
 
   useEffect(() => {
     fetchMealPlans();
@@ -55,25 +57,68 @@ function DietPlans() {
     }
   };
 
-  const handlePlanSelect = async (plan: MealPlan) => {
-    setSelectedPlan(plan);
-    await fetchMealOptions(plan.id);
-  };
+  const getPersonalizedRecommendations = async () => {
+    try {
+      // Get user profile data
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', user?.id)
+        .single();
 
-  const handleDietTypeChange = async (type: 'veg' | 'non-veg' | 'vegan') => {
-    setDietType(type);
-    if (selectedPlan) {
-      await fetchMealOptions(selectedPlan.id);
+      if (profileError) throw profileError;
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/meal-recommendations`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            profile: {
+              weight: profile.weight,
+              height: profile.height,
+              age: profile.age,
+              gender: profile.gender.toLowerCase(),
+              activity_level: activityLevel,
+            },
+            plan_type: selectedPlan?.type,
+            diet_type: dietType,
+          }),
+        }
+      );
+
+      if (!response.ok) throw new Error('Failed to get recommendations');
+
+      const recommendations = await response.json();
+      setRecommendations(recommendations);
+      setShowCustomization(true);
+    } catch (error) {
+      addToast('Failed to get personalized recommendations. Please try again.', 'error');
     }
   };
 
-  const handleCustomize = () => {
+  const handlePlanSelect = (plan: MealPlan) => {
+    setSelectedPlan(plan);
+    setShowCustomization(false);
+    setRecommendations(null);
+  };
+
+  const handleDietTypeChange = (type: 'veg' | 'non-veg' | 'vegan') => {
+    setDietType(type);
+    setShowCustomization(false);
+    setRecommendations(null);
+  };
+
+  const handleCustomize = async () => {
     if (!user) {
       addToast('Please login to customize your meal plan', 'info');
       navigate('/login');
       return;
     }
-    setShowCustomization(true);
+    await getPersonalizedRecommendations();
   };
 
   const getPlanIcon = (type: string) => {
@@ -162,50 +207,100 @@ function DietPlans() {
           </div>
         </div>
 
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Activity Level
+          </label>
+          <select
+            value={activityLevel}
+            onChange={(e) => setActivityLevel(e.target.value)}
+            className="input"
+          >
+            <option value="sedentary">Sedentary (little or no exercise)</option>
+            <option value="light">Light (exercise 1-3 times/week)</option>
+            <option value="moderate">Moderate (exercise 3-5 times/week)</option>
+            <option value="active">Active (exercise 6-7 times/week)</option>
+            <option value="very_active">Very Active (intense exercise daily)</option>
+          </select>
+        </div>
+
         <button
           onClick={handleCustomize}
           className="w-full btn-primary py-3 text-lg"
         >
-          Customize Your Meals
+          Get Personalized Plan
         </button>
       </div>
 
-      {showCustomization && (
+      {showCustomization && recommendations && (
         <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-2xl font-semibold mb-6">Your Personalized Meal Options</h2>
+          <h2 className="text-2xl font-semibold mb-6">Your Personalized Meal Plan</h2>
           
-          {['breakfast', 'lunch', 'dinner', 'snack'].map((mealType) => (
-            <div key={mealType} className="mb-8">
-              <h3 className="text-xl font-semibold mb-4 capitalize">{mealType}</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {mealOptions
-                  .filter(option => option.meal_type === mealType)
-                  .map(option => (
-                    <div key={option.id} className="border rounded-lg p-4">
-                      <img 
-                        src={option.image_url} 
-                        alt={option.name}
-                        className="w-full h-48 object-cover rounded-lg mb-4"
-                      />
-                      <h4 className="font-semibold mb-2">{option.name}</h4>
-                      <p className="text-sm text-gray-600 mb-2">{option.description}</p>
-                      <div className="text-sm">
-                        <span className="font-medium">Calories:</span> {option.calories} kcal
-                      </div>
-                      <div className="text-sm">
-                        <span className="font-medium">Protein:</span> {option.protein}g
-                      </div>
-                      <div className="text-sm">
-                        <span className="font-medium">Carbs:</span> {option.carbs}g
-                      </div>
-                      <div className="text-sm">
-                        <span className="font-medium">Fats:</span> {option.fats}g
-                      </div>
-                    </div>
-                  ))}
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div className="bg-brand-50 p-4 rounded-lg">
+              <h3 className="font-semibold mb-2">Daily Calories</h3>
+              <p className="text-2xl font-bold text-brand-600">
+                {recommendations.daily_calories} kcal
+              </p>
             </div>
-          ))}
+            <div className="bg-brand-50 p-4 rounded-lg">
+              <h3 className="font-semibold mb-2">Protein</h3>
+              <p className="text-2xl font-bold text-brand-600">
+                {recommendations.macros.protein}g
+              </p>
+            </div>
+            <div className="bg-brand-50 p-4 rounded-lg">
+              <h3 className="font-semibold mb-2">Carbs</h3>
+              <p className="text-2xl font-bold text-brand-600">
+                {recommendations.macros.carbs}g
+              </p>
+            </div>
+            <div className="bg-brand-50 p-4 rounded-lg">
+              <h3 className="font-semibold mb-2">Fats</h3>
+              <p className="text-2xl font-bold text-brand-600">
+                {recommendations.macros.fats}g
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {Object.entries(recommendations.meal_distribution).map(([meal, calories]) => (
+              <div key={meal} className="border rounded-lg p-4">
+                <h3 className="text-lg font-semibold capitalize mb-2">{meal}</h3>
+                <p className="text-brand-600">Target Calories: {calories} kcal</p>
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {mealOptions
+                    .filter(option => 
+                      option.meal_type === meal && 
+                      Math.abs(option.calories - Number(calories)) <= 100
+                    )
+                    .map(option => (
+                      <div key={option.id} className="border rounded-lg p-4">
+                        <img 
+                          src={option.image_url} 
+                          alt={option.name}
+                          className="w-full h-48 object-cover rounded-lg mb-4"
+                        />
+                        <h4 className="font-semibold mb-2">{option.name}</h4>
+                        <p className="text-sm text-gray-600 mb-2">{option.description}</p>
+                        <div className="text-sm">
+                          <span className="font-medium">Calories:</span> {option.calories} kcal
+                        </div>
+                        <div className="text-sm">
+                          <span className="font-medium">Protein:</span> {option.protein}g
+                        </div>
+                        <div className="text-sm">
+                          <span className="font-medium">Carbs:</span> {option.carbs}g
+                        </div>
+                        <div className="text-sm">
+                          <span className="font-medium">Fats:</span> {option.fats}g
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
